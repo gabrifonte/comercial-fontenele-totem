@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// SEGURANÇA
+// - Qualquer pessoa pode LER os brindes (a roleta precisa disso) e dar baixa de 1 brinde por sorteio.
+// - Somente o GERENTE (login por e-mail e senha) pode criar/editar/apagar brindes, ver o histórico
+//   de sorteios, zerar dados, importar backup etc.
+// - Troque o e-mail abaixo pelo e-mail da conta de gerente criada em Authentication > Users.
+// - Todo o resto do banco fica bloqueado.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isManager() {
+      return request.auth != null
+        && request.auth.token.email == 'gabrifonte10@gmail.com';
+    }
+
+    match /prizes/{id} {
+      allow read: if true;
+      allow create, delete: if isManager();
+      // Visitante (roleta): só pode baixar exatamente 1 unidade do estoque e somar 1 entrega.
+      allow update: if isManager()
+        || (request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['currentStock', 'deliveredCount', 'isActive'])
+            && request.resource.data.currentStock is int
+            && request.resource.data.currentStock >= 0
+            && request.resource.data.currentStock == resource.data.currentStock - 1
+            && request.resource.data.deliveredCount == resource.data.deliveredCount + 1);
+    }
+
+    match /draws/{id} {
+      // O histórico é privado (somente gerente).
+      allow read, update, delete: if isManager();
+      // A roleta pode registrar um sorteio novo, com exatamente estes campos.
+      allow create: if isManager()
+        || (request.resource.data.keys()
+              .hasOnly(['id', 'drawNumber', 'prizeId', 'prizeName', 'timestamp', 'delivered'])
+            && request.resource.data.drawNumber is int
+            && request.resource.data.delivered == true);
+    }
+
+    match /meta/{id} {
+      allow read: if true;
+      allow delete: if isManager();
+      // Contador de sorteios: o visitante só pode somar +1.
+      allow create: if isManager()
+        || (request.resource.data.keys().hasOnly(['draws'])
+            && request.resource.data.draws == 1);
+      allow update: if isManager()
+        || (request.resource.data.keys().hasOnly(['draws'])
+            && request.resource.data.draws == resource.data.draws + 1);
+    }
+  }
+}
